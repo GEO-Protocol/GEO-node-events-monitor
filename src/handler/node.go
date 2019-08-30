@@ -2,19 +2,19 @@ package handler
 
 import (
 	"bufio"
+	"bytes"
 	"conf"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"io"
 	"logger"
+	"net/http"
 	"os"
 	"path"
-	"time"
 	"strconv"
-	"crypto/sha256"
-	"fmt"
-	"net/http"
-	"bytes"
-	"encoding/json"
-	"encoding/hex"
+	"time"
 )
 
 // This internal type is used for controlling internal node's goroutines behaviour.
@@ -25,12 +25,12 @@ type goroutineControlEvent struct {
 // Represents GEO engine node in the handler.
 // Handles reading and writing of the fifo files.
 type Node struct {
-	eventsGoroutineControlChannel  	chan *goroutineControlEvent
+	eventsGoroutineControlChannel chan *goroutineControlEvent
 }
 
 func NewNode() *Node {
 	return &Node{
-		eventsGoroutineControlChannel:	 nil,
+		eventsGoroutineControlChannel: nil,
 	}
 }
 
@@ -38,7 +38,7 @@ func NewNode() *Node {
 //
 // Returns error in case if internal node process (geo engine client) failed to start properly,
 // or connection to events fifo files can't be established correctly.
-func (node *Node) AttachEventsMonitor() (error) {
+func (node *Node) AttachEventsMonitor() error {
 	// Node instance must wait some time for the child process to start listening for commands.
 	// this timeout specifies how long it would wait.
 
@@ -90,7 +90,7 @@ func openFifoFileForReading(fifoPath string, node *Node) (*os.File, error) {
 				node.logError("Max tries count expired. Report error and exit")
 				return fifo, err
 			}
-			node.logError("Can't open "+fifoPath+" for reading. Details: " + err.Error())
+			node.logError("Can't open " + fifoPath + " for reading. Details: " + err.Error())
 			node.logError("Wait 3s before repeat")
 			time.Sleep(time.Second * 3)
 			continue
@@ -113,7 +113,7 @@ func (node *Node) beginReceiveEvents(
 	eventsFIFOPath := path.Join(nodeWorkingDirPath, "fifo", "events.fifo")
 	fifo, err := openFifoFileForReading(eventsFIFOPath, node)
 	if err != nil {
-		node.logError("Can't open "+eventsFIFOPath+" for reading. Details: " + err.Error())
+		node.logError("Can't open " + eventsFIFOPath + " for reading. Details: " + err.Error())
 		errorsChannel <- wrap("Can't open "+eventsFIFOPath+" file for reading", err)
 		return
 	}
@@ -161,108 +161,106 @@ func (node *Node) beginReceiveEvents(
 }
 
 type Topology struct {
-	Node		string		`json:"node"`
-	Neighbors	[]string	`json:"neighbors"`
-	Equivalent	string		`json:"equivalent"`
+	Node       string   `json:"hash"`
+	Neighbors  []string `json:"neighbors"`
+	Equivalent uint32   `json:"equivalent"`
 }
 
 type TrustLine struct {
-	Source		string		`json:"nodeHashFrom"`
-	Destination	string		`json:"nodeHashTo"`
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
+	Equivalent  uint32 `json:"equivalent"`
 }
 
 type Payment struct {
-	Source		string		`json:"fromNodeHash"`
-	Destination	string		`json:"toNodeHash"`
-	Paths		[][]string	`json:"paths"`
+	Source          string     `json:"coordinator"`
+	Destination     string     `json:"receiver"`
+	Equivalent      uint32     `json:"equivalent"`
+	TransactionUUID string     `json:"transaction_uuid"`
+	Paths           [][]string `json:"paths"`
 }
 
-func (node* Node) notifyServicesAboutEvent(event *Event) {
+func (node *Node) notifyServicesAboutEvent(event *Event) {
 	switch event.Code {
 	case 0:
 		logger.Info("Topology event")
 		if len(event.Tokens) < 3 {
-			logger.Error("Invalid tokens count on topology event")
+			node.logError("Invalid tokens count on topology event")
 			return
 		}
 		neighborsCount, err := strconv.Atoi(event.Tokens[2])
 		if err != nil {
-			logger.Error("Invalid neighbors count token on topology event. Details: " + err.Error())
+			node.logError("Invalid neighbors count token on topology event. Details: " + err.Error())
+			return
+		}
+		equivalent, err := strconv.Atoi(event.Tokens[0])
+		if err != nil {
+			node.logError("Invalid equivalent parameter on topology event. Details: " + event.Tokens[0])
 			return
 		}
 		topology := Topology{
-			Node: convertToSHA256Hash(event.Tokens[1]),
-			Equivalent: event.Tokens[0]}
-		for idx:=0; idx<neighborsCount; idx++ {
+			Node:       convertToSHA256Hash(event.Tokens[1]),
+			Equivalent: uint32(equivalent)}
+		for idx := 0; idx < neighborsCount; idx++ {
 			topology.Neighbors = append(topology.Neighbors, convertToSHA256Hash(event.Tokens[idx+3]))
 		}
-		logger.Info(fmt.Sprint(topology))
-		nodes := TrustLine {
-			Source: convertToSHA256Hash(event.Tokens[1]),
-			Destination:convertToSHA256Hash(event.Tokens[1])}
-		logger.Info(fmt.Sprint(nodes))
-		node.sendHTTPEvent(nodes, "/api/v1/nodes", "POST")
+		node.logInfo(fmt.Sprint(topology))
+		node.sendHTTPEvent(topology, "/api/v1/node-topology", "POST")
 	case 1:
-		logger.Info("Init TL event")
+		node.logInfo("Init TL event")
 		if len(event.Tokens) != 3 {
-			logger.Error("Invalid tokens count on init TL event")
+			node.logError("Invalid tokens count on init TL event")
+			return
+		}
+		equivalent, err := strconv.Atoi(event.Tokens[0])
+		if err != nil {
+			node.logError("Can't convert equivalent " + event.Tokens[0])
 			return
 		}
 		trustLine := TrustLine{
-			Source:convertToSHA256Hash(event.Tokens[1]),
-			//Source:event.Tokens[1],
-			Destination:convertToSHA256Hash(event.Tokens[2])}
-			//Destination:event.Tokens[2]}
-		logger.Info(fmt.Sprint(trustLine))
-		node.sendHTTPEvent(trustLine, "/api/v1/trustlines", "POST")
+			Source:      convertToSHA256Hash(event.Tokens[1]),
+			Destination: convertToSHA256Hash(event.Tokens[2]),
+			Equivalent:  uint32(equivalent)}
+		node.logInfo(fmt.Sprint(trustLine))
+		node.sendHTTPEvent(trustLine, "/api/v1/trustline", "POST")
 	case 2:
-		logger.Info("Close TL event")
+		node.logInfo("Close TL event")
 		if len(event.Tokens) != 3 {
-			logger.Error("Invalid tokens count on close TL event")
+			node.logError("Invalid tokens count on close TL event")
 			return
 		}
 		trustLine := TrustLine{
-			Source:convertToSHA256Hash(event.Tokens[1]),
-			//Source:event.Tokens[1],
-			Destination:convertToSHA256Hash(event.Tokens[2])}
-			//Destination:event.Tokens[2]}
-		logger.Info(fmt.Sprint(trustLine))
-		node.sendHTTPEvent(trustLine, "/api/v1/trustlines", "DELETE")
+			Source:      convertToSHA256Hash(event.Tokens[1]),
+			Destination: convertToSHA256Hash(event.Tokens[2])}
+		node.logInfo(fmt.Sprint(trustLine))
+		node.sendHTTPEvent(trustLine, "/api/v1/trustline", "DELETE")
 	case 3:
-		logger.Info("Payment event")
+		node.logInfo("Payment event")
 		if len(event.Tokens) < 4 {
-			logger.Error("Invalid tokens count on payment event")
+			node.logError("Invalid tokens count on payment event")
+			return
+		}
+		equivalent, err := strconv.Atoi(event.Tokens[0])
+		if err != nil {
+			node.logError("Can't convert equivalent " + event.Tokens[0])
 			return
 		}
 		payment := Payment{
-			Source:convertToSHA256Hash(event.Tokens[1]),
-			Destination:convertToSHA256Hash(event.Tokens[2])}
-		// todo : remove payment1
-		payment1 := Payment{
-			Source:event.Tokens[1], Destination:event.Tokens[2]}
+			TransactionUUID: event.Tokens[1],
+			Source:          convertToSHA256Hash(event.Tokens[2]),
+			Destination:     convertToSHA256Hash(event.Tokens[3]),
+			Equivalent:      uint32(equivalent)}
 		var paymentPath []string
-		paymentPath = append(paymentPath, convertToSHA256Hash(event.Tokens[1]))
-		var paymentPath1 []string
-		paymentPath1 = append(paymentPath1, event.Tokens[1])
-		for idx:=3; idx<len(event.Tokens); idx++ {
-			if event.Tokens[idx] == event.Tokens[2] {
-				paymentPath = append(paymentPath, convertToSHA256Hash(event.Tokens[idx]))
+		for idx := 4; idx < len(event.Tokens); idx++ {
+			if event.Tokens[idx] == event.Tokens[3] {
 				payment.Paths = append(payment.Paths, paymentPath)
 				paymentPath = nil
-				paymentPath = append(paymentPath, convertToSHA256Hash(event.Tokens[1]))
-
-				paymentPath1 = append(paymentPath1, event.Tokens[idx])
-				payment1.Paths = append(payment1.Paths, paymentPath1)
-				paymentPath1 = nil
-				paymentPath1 = append(paymentPath1, event.Tokens[1])
 			} else {
 				paymentPath = append(paymentPath, convertToSHA256Hash(event.Tokens[idx]))
-				paymentPath1 = append(paymentPath1, event.Tokens[idx])
 			}
 		}
-		logger.Info(fmt.Sprint(payment1))
-		logger.Info(fmt.Sprint(payment))
-		node.sendHTTPEvent(payment, "/api/v1/payments", "POST")
+		node.logInfo(fmt.Sprint(payment))
+		node.sendHTTPEvent(payment, "/api/v1/payment", "POST")
 	default:
 		node.logError("Unexpected event type " + strconv.Itoa(event.Code))
 	}
@@ -274,7 +272,7 @@ func convertToSHA256Hash(nodeAddress string) string {
 	return hash
 }
 
-func (node* Node) sendHTTPEvent(data interface{}, requestHeader string, method string) {
+func (node *Node) sendHTTPEvent(data interface{}, requestHeader string, method string) {
 	url := fmt.Sprint(conf.Params.Service.ServiceInterface(), requestHeader)
 	logger.Info("Try send request: " + url)
 	js, err := json.Marshal(data)
