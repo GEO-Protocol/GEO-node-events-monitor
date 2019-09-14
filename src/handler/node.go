@@ -110,7 +110,7 @@ func (node *Node) beginReceiveEvents(
 	// Give process some time to open events.fifo for writing.
 	time.Sleep(time.Second * time.Duration(initialStartupDelaySeconds))
 
-	eventsFIFOPath := path.Join(nodeWorkingDirPath, "fifo", "events.fifo")
+	eventsFIFOPath := path.Join(nodeWorkingDirPath, "fifo", conf.Params.Service.EventsFile)
 	fifo, err := openFifoFileForReading(eventsFIFOPath, node)
 	if err != nil {
 		node.logError("Can't open " + eventsFIFOPath + " for reading. Details: " + err.Error())
@@ -273,7 +273,7 @@ func convertToSHA256Hash(nodeAddress string) string {
 }
 
 func (node *Node) sendHTTPEvent(data interface{}, requestHeader string, method string) {
-	url := fmt.Sprint(conf.Params.Service.ServiceInterface(), requestHeader)
+	url := fmt.Sprint(conf.Params.Service.URL, requestHeader)
 	logger.Info("Try send request: " + url)
 	js, err := json.Marshal(data)
 	if err != nil {

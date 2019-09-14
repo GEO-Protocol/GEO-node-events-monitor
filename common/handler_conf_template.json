@@ -5,8 +5,8 @@
   "collecting_data_service": {
     "events_monitor_path": "<full path to the events-monitor binary>/events-monitor",
     "allow_send_events": true,
-    "allow_send_logs": true,
-    "host": "206.189.84.116",
-    "port": 3030
+    "events_file_name": "visualization.fifo",
+    "url": "https://geoexplorer.io",
+    "allow_send_logs": false
   }
 }

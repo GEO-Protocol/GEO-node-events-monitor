@@ -4,27 +4,22 @@ import (
 	"encoding/json"
 	"errors"
 	"io/ioutil"
-	"strconv"
 )
 
 type HandlerSettings struct {
-	NodeDirPath              string `json:"node_path"`
+	NodeDirPath string `json:"node_path"`
 }
 
 type ServiceSettings struct {
-	SendEvents	bool	`json:"allow_send_events"`
-	SendLogs	bool	`json:"allow_send_logs"`
-	Host 		string	`json:"host"`
-	Port 		uint16	`json:"port"`
+	SendEvents bool   `json:"allow_send_events"`
+	EventsFile string `json:"events_file_name"`
+	URL        string `json:"url"`
+	SendLogs   bool   `json:"allow_send_logs"`
 }
 
 type Settings struct {
-	Handler 		HandlerSettings `json:"handler"`
-	Service			ServiceSettings	`json:"collecting_data_service"`
-}
-
-func (s ServiceSettings) ServiceInterface() string {
-	return "http://" + s.Host + ":" + strconv.Itoa(int(s.Port))
+	Handler HandlerSettings `json:"handler"`
+	Service ServiceSettings `json:"collecting_data_service"`
 }
 
 var (

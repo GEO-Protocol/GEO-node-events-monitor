@@ -1,16 +1,16 @@
 package handler
 
 import (
+	"bytes"
 	"conf"
 	"errors"
-	"os"
-	"logger"
-	"io"
 	"fmt"
-	"net/http"
-	"strconv"
-	"bytes"
+	"io"
+	"logger"
 	"mime/multipart"
+	"net/http"
+	"os"
+	"strconv"
 	"time"
 )
 
@@ -60,7 +60,7 @@ func sendHTTPLogFile() (err error) {
 	}
 	writer.Close()
 
-	url := fmt.Sprint(conf.Params.Service.ServiceInterface(), "/api/v1/log/")
+	url := fmt.Sprint(conf.Params.Service.URL, "/api/v1/log/")
 	req, err := http.NewRequest("POST", url, &bytesBuffer)
 	if err != nil {
 		return err
