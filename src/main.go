@@ -2,10 +2,9 @@ package main
 
 import (
 	"conf"
+	"handler"
 	"logger"
 	"os"
-	"handler"
-	"net/http"
 )
 
 func main() {
@@ -47,5 +46,5 @@ func main() {
 
 	logger.Info("Handler started")
 
-	http.ListenAndServe(":8080", nil)
+	select {}
 }
